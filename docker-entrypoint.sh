@@ -1,0 +1,162 @@
+#!/bin/bash
+
+v_backups=/backups
+v_entrypts=/docker-entrypoint-initdb.d
+
+
+function setLocaleAndTZ {
+	echo "Set locale to ${LANG}"	
+	local LANG1=$( echo "$LANG" | awk -F "." '{ print $1 }' )
+	local ENCODING=$( echo "$LANG" | awk -F "." '{ print $2 }' )
+	egrep "^($LANG1)?(\.$ENCODING)?[[:space:]]+$ENCODING$" /usr/share/i18n/SUPPORTED > /etc/locale.gen
+	if ! locale-gen; then
+		echo "Error generating locale!"
+		exit 1
+	fi
+
+	echo "Set timezone to ${AREA}/${ZONE}"
+	ZONEINFO_FILE='/usr/share/zoneinfo/'"${AREA}"'/'"${ZONE}"
+	ln --force --symbolic "${ZONEINFO_FILE}" '/etc/localtime'
+	if ! dpkg-reconfigure --frontend=noninteractive tzdata; then
+		echo "Error configuring timezone!"
+		exit 1
+	fi
+}
+
+function clean-data-volume {
+	[[ -n $DATA_VOL ]] && rm -rf "$DATA_VOL/*"
+}
+
+function toggleUserAccess {
+	[[ $# -ne 1 ]] && return 1
+	case $1 in
+		[o|O][n|N] )
+			echo "Enabling network access ($PGDATA/pg_hba.conf) and reloading postgres"
+			sed -i 's|^#host all all 0.0.0.0/0 \(.*\)|host all all 0.0.0.0/0 \1|' "$PGDATA/pg_hba.conf"
+			;;
+		[o|O][f|F][f|F] )
+			echo "Blocking network access ($PGDATA/pg_hba.conf) and reloading postgres"
+			sed -i 's|^host all all 0.0.0.0/0 \(.*\)|#host all all 0.0.0.0/0 \1|' "$PGDATA/pg_hba.conf"
+			;;
+		* )
+			return 1
+			;;
+	esac
+	gosu postgres pg_ctl -D "$PGDATA" reload
+}
+
+function restore {
+	if [[ $# -ne 1 || ! -f "$v_backups/$1_pgwal.tar.gz" || ! -f "$v_backups/$1_pgdata.tar.gz" ]] ;then 
+		echo "$1_pgdata.tar.gz/$1_pgwal.tar.gz not found in backup volume."
+		exit 1
+	fi
+
+	echo "Restoring postgres from $1_pgdata.tar.gz and $1_pgwal.tar.gz"
+	#http://www.anchor.com.au/documentation/better-postgresql-backups-with-wal-archiving/
+
+	if gosu postgres pg_ctl -D "$PGDATA" status ; then
+		echo "Shutting down postgres..."
+		gosu postgres pg_ctl -D "$PGDATA" -m fast -w stop
+	fi
+
+	echo "Cleaning database directory ($PGDATA/*)"
+	rm -rfv "${PGDATA}/*"
+
+	echo "Unpack the backed-up data files and the archived WAL segments"
+	tar -zxvf "$v_backups/$1_pgdata.tar.gz"
+	tar -zxvf "$v_backups/$1_pgwal.tar.gz"
+
+	echo "Clean live WAL files ($PGDATA/pg_xlog/*)"
+	rm -rfv "${PGDATA}/pg_xlog/*"
+
+	toggleUserAccess off
+
+	echo "Create a recovery file" #TODO: check if auto removed
+	echo "restore_command = 'cp $WAL_DIR/%f \"%p\"'" > "$PGDATA/recovery.conf"
+	chown postgres:postgres "$PGDATA/recovery.conf"
+	chmod 0600 "$PGDATA/recovery.conf"
+
+	echo "Start postgres for recovery"
+	gosu postgres pg_ctl -D "$PGDATA" -w start
+	echo "DEBUG : end of start recovery !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+
+	echo "Remove the archived WAL segments"
+	rm -f "$WAL_DIR"/*
+
+	toggleUserAccess on
+
+	echo "Removing restore files"
+	rm "$v_backups/restore.$1"
+	
+	gosu postgres pg_ctl -D "$PGDATA" -m fast -w stop
+}
+
+function getRestorationDate {
+	restore_date_files=$(find $v_backups -regextype posix-extended -regex '.*restore\.[0-9]{8}-[0-9]{6}')
+	[[ $(echo "$restore_date_files" | wc -l) -ne 1 ]] && return 1
+
+	restore_date=$(echo "$restore_date_files" | grep -Eo '[0-9]{8}-[0-9]{6}')
+	[[ -n "$restore_date" ]] && echo "$restore_date"
+}
+
+function set_folders {
+	mkdir -p "$PGDATA" "$WAL_DIR"
+	chmod -R 700 "$PGDATA" "$WAL_DIR" 
+	chmod +x /usr/local/bin/*
+	chown -R postgres:postgres "$PGDATA" "$WAL_DIR"
+}
+
+function main {
+	set_folders
+	case $1 in
+		postgres )
+			
+			#Configuration of Timezone and locale BEFORE initdb
+			setLocaleAndTZ
+
+			if [[ ! -s "$PGDATA/PG_VERSION" ]]; then
+				echo "Postgres cluster not initialized yet!"
+				#Move the cluster configuration script (WAL archiving...) to $v_entrypts
+				chmod 700 "$v_entrypts/00_config-cluster.sh" \
+					&& chown -R postgres:postgres "$v_entrypts" \
+					&& chmod -R 770 "$v_entrypts" \
+					&& echo "$v_entrypts/00_config-cluster.sh will be run after initdb"
+				# Using original docker-entrypoint for standard settings
+				/check-initdb.sh postgres
+			fi
+
+			restore_date=$(getRestorationDate)
+			if [[ -n "$restore_date" ]]; then
+				echo "Restoring $restore_date files from $v_backups..."
+				restore "$restore_date"
+			fi
+			
+			echo "Starting..."
+			exec gosu postgres "$@"
+
+			;;
+		clean-data )
+			clean-data-volume
+			;;
+		help )
+			echo "--  Initialization     :"
+			echo "* docker run --name=<my_pg_instance> --net=<my_network> -v </my/data/paths>:$DATA_VOL -v </my/backup/path>:$v_backups [-v </my/init/scripts>:$v_entrypts] -e POSTGRES_PASSWORD=<my-password> [-e PG_LOCALE=<fr_FR>] [-e PG_ENCODING=<UTF-8>] gp3t1/postgres-hb postgres"
+			echo "--  Operations         :"
+			echo "* docker <start|stop|restart> <my_pg_instance>"
+			echo "--  Backup             :"
+			echo "* docker exec -t <my_pg_instance> hot_backup"
+			echo "--  Restore            :"
+			echo "* touch </my/backup/path>/restore.<DATE> && docker [re]start <my_pg_instance>"
+			echo "  (the <DATE> used must match archives in </my/backup/path>, i.e. one pgdata.tar.gz and one pgwal.tar.gz generated by a backup)"
+			echo "--  Remove container   :"
+			echo "* docker rm [-f] [-v] <my_pg_instance>"
+			echo "  (option -f stop the container if needed, option -v remove the volumes)"
+			exit 0
+			;;
+		* )
+			exec "$@"
+			;;
+	esac
+}
+
+main "$@"

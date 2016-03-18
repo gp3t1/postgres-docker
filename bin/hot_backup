@@ -1,0 +1,29 @@
+#!/bin/bash
+
+backup_signal="$WAL_DIR/backup_in_progress"
+v_backups=/backups
+DATE=$(date +%Y%m%d-%H%M%S)
+
+PREFIX=${1:-$DATE}
+
+# Signal that we're starting a backup
+touch "$backup_signal"
+gosu postgres /usr/bin/psql -c "SELECT pg_start_backup('backup_${PREFIX}');"  # May not return immediately if system is busy
+
+# Grab the main data files
+tar -zcf "${v_backups}/${PREFIX}_pgdata.tar.gz" "pg_data"
+
+# Signal that we're done with the main part of the backup
+gosu postgres /usr/bin/psql -c "SELECT pg_stop_backup();"
+rm -f "$backup_signal"
+
+# Grab the WAL archives that were created while we were copying the main data files
+tar -zcf "${v_backups}/${PREFIX}_pgwal.tar.gz" "pg_wal_archive"
+
+# Nuke archived WAL segments now that we're done
+rm -f "$WAL_DIR"/*
+
+# You should now remove old dumps from $v_backups if they're older than your retention period.
+# tmpreaper or tmpwatch are tools that can do this for you.
+find "${v_backups}" -name "*.tar.gz" -ctime +30 -exec rm -f {} \;
+exit $?

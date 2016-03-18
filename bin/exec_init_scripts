@@ -1,0 +1,16 @@
+#!/bin/bash
+
+function exec_init_scripts {
+	for f in /docker-entrypoint-initdb.d/*; do
+		case "$f" in
+			*.sh)  echo "$0: running $f"; . "$f" ;;
+			*.sql) 
+				echo "$0: running $f"; 
+				gosu postgres psql -v ON_ERROR_STOP=1 < "$f"
+				;;
+			*)     echo "$0: ignoring $f" ;;
+		esac
+	done
+}
+
+exec_init_scripts
