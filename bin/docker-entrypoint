@@ -122,7 +122,7 @@ function main {
 					&& chmod -R 770 "$v_entrypts" \
 					&& echo "$v_entrypts/00_config-cluster.sh will be run after initdb"
 				# Using original docker-entrypoint for standard settings
-				/check-initdb.sh postgres
+				check-initdb.sh postgres
 			fi
 
 			restore_date=$(getRestorationDate)

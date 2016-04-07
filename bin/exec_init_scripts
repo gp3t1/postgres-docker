@@ -3,10 +3,10 @@
 function exec_init_scripts {
 	for f in /docker-entrypoint-initdb.d/*; do
 		case "$f" in
-			*.sh)  echo "$0: running $f"; . "$f" ;;
+			*.sh)  echo "$0: running $f"; . "$f" && mv "$f" "$f.done" ;;
 			*.sql) 
 				echo "$0: running $f"; 
-				gosu postgres psql -v ON_ERROR_STOP=1 < "$f"
+				gosu postgres psql -v ON_ERROR_STOP=1 < "$f" && mv "$f" "$f.done"
 				;;
 			*)     echo "$0: ignoring $f" ;;
 		esac

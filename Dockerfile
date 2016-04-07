@@ -4,7 +4,7 @@ MAINTAINER Jeremy PETIT "jeremy.petit@gmail.com"
 
 # -e LANG="fr_FR.UTF-8" -e AREA="Europe" -e ZONE="Paris" -e POSTGRES_PASSWORD=test -v ./vol_test/backups:/backups -v ./vol_test/pgdata:/var/lib/postgresql/data
 
-ENV LANG fr_FR.UTF-8
+ENV LANG en_US.UTF-8
 ENV AREA 'Europe'
 ENV ZONE 'Paris'
 
@@ -18,14 +18,13 @@ RUN  mkdir -p /var/lib/postgresql/data/pg_wal_archive /docker-entrypoint-initdb.
 	&& chmod -R 770 /var/lib/postgresql/data/pg_wal_archive /docker-entrypoint-initdb.d \
 	&& chown -R postgres:postgres /var/lib/postgresql/data/pg_wal_archive /docker-entrypoint-initdb.d
 RUN  sed -i '/^[\n|\t]*exec.*$/d' docker-entrypoint.sh \
-	&& mv docker-entrypoint.sh check-initdb.sh
+	&& mv docker-entrypoint.sh /usr/local/bin/check-initdb
 		
 COPY bin/* /usr/local/bin/
 COPY docker-entrypoint-initdb.d/* /docker-entrypoint-initdb.d/
-COPY docker-entrypoint.sh /
+RUN chmod +x /usr/local/bin/* /docker-entrypoint-initdb.d/*
 
 WORKDIR "$DATA_VOL"
 
-ENTRYPOINT ["/docker-entrypoint.sh"]
-
-CMD ["help"]
+ENTRYPOINT ["docker-entrypoint"]
+CMD ["postgres"]
