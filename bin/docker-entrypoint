@@ -2,6 +2,7 @@
 
 v_backups=/backups
 v_entrypts=/docker-entrypoint-initdb.d
+v_entrypts_tmp=/docker-entrypoint-initdb.d-tmp/
 
 
 function setLocaleAndTZ {
@@ -100,7 +101,7 @@ function getRestorationDate {
 }
 
 function set_folders {
-	mkdir -p "$PGDATA" "$WAL_DIR"
+	mkdir -p "$PGDATA" "$WAL_DIR" "$v_entrypts/done"
 	chmod -R 700 "$PGDATA" "$WAL_DIR" 
 	chmod +x /usr/local/bin/*
 	chown -R postgres:postgres "$PGDATA" "$WAL_DIR"
@@ -117,12 +118,18 @@ function main {
 			if [[ ! -s "$PGDATA/PG_VERSION" ]]; then
 				echo "Postgres cluster not initialized yet!"
 				#Move the cluster configuration script (WAL archiving...) to $v_entrypts
+				cp "$v_entrypts_tmp/*" "$v_entrypts/"
 				chmod 700 "$v_entrypts/00_config-cluster.sh" \
 					&& chown -R postgres:postgres "$v_entrypts" \
 					&& chmod -R 770 "$v_entrypts" \
 					&& echo "$v_entrypts/00_config-cluster.sh will be run after initdb"
 				# Using original docker-entrypoint for standard settings
-				check-initdb.sh postgres
+				OLD_PWD=$(pwd)
+				cd "$v_entrypts"
+				check-initdb postgres \
+				&& tar -zcf "$v_entrypts/init.tar.gz" "$v_entrypts/*" --exclude='done' \
+				&& rm "$v_entrypts/*.s*"
+				cd "$OLD_PWD"
 			fi
 
 			restore_date=$(getRestorationDate)

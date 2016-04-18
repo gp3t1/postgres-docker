@@ -8,7 +8,7 @@ ENV LANG en_US.UTF-8
 ENV AREA 'Europe'
 ENV ZONE 'Paris'
 
-VOLUME ["/backups"]
+VOLUME ["/backups", "/docker-entrypoint-initdb.d"]
 
 ENV DATA_VOL /var/lib/postgresql/data
 ENV PGDATA /var/lib/postgresql/data/pg_data
@@ -21,8 +21,8 @@ RUN  sed -i '/^[\n|\t]*exec.*$/d' docker-entrypoint.sh \
 	&& mv docker-entrypoint.sh /usr/local/bin/check-initdb
 		
 COPY bin/* /usr/local/bin/
-COPY docker-entrypoint-initdb.d/* /docker-entrypoint-initdb.d/
-RUN chmod +x /usr/local/bin/* /docker-entrypoint-initdb.d/*
+COPY docker-entrypoint-initdb.d/* /docker-entrypoint-initdb.d-tmp/
+RUN chmod +x /usr/local/bin/*
 
 WORKDIR "$DATA_VOL"
 
