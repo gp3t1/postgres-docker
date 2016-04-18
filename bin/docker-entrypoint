@@ -127,7 +127,7 @@ function main {
 				OLD_PWD=$(pwd)
 				cd "$v_entrypts"
 				check-initdb postgres \
-				&& tar -zcf "$v_entrypts/init.tar.gz" "$v_entrypts/*" --exclude='done' \
+				&& tar -zcf "$v_entrypts/done/init.tar.gz" "$v_entrypts/*" --exclude='done' \
 				&& rm "$v_entrypts/*.s*"
 				cd "$OLD_PWD"
 			fi
