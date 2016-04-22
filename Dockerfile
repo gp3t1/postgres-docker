@@ -1,4 +1,4 @@
-FROM postgres:9.5
+FROM postgres:9
 
 MAINTAINER Jeremy PETIT "jeremy.petit@gmail.com"
 
