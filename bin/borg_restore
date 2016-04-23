@@ -1,0 +1,70 @@
+#!/bin/bash
+#ENV PGDATA /var/lib/postgresql/data/pg_data
+#ENV WAL_DIR /var/lib/postgresql/data/pg_wal_archive
+TAG=$1
+
+exit_message() {
+	if [[ "$1" =~ ^[0-9]{1,4}$ ]] ; then
+		CODE="$1"
+	else
+		CODE=-1
+	fi
+	printf "\nEXIT[%i] : %s" "$CODE" "$2"
+	exit $CODE
+}
+
+extract() {
+	opts="$1"
+	cd "$DATA_VOL"
+	borg extract --info --show-rc "$opts" ::"$ARCHIVE_PGDATA" || return 1
+	borg extract --info --show-rc "$opts" ::"$ARCHIVE_PGWAL" 	|| return 1
+	return 0
+}
+
+# Check if postgres is running
+if pgrep "postgres" > /dev/null ; then
+	exit_message 1 "You cannot restore while postgres is running!"
+fi
+
+if [[ -z "$TAG" ]]; then
+	exit_message 2 "You must specify an archive tag!"
+fi
+
+ARCHIVE_PGDATA="${TAG}.pgdata"
+ARCHIVE_PGWAL="${TAG}.pgwal"
+
+#Check archives exist
+borg list --short | grep -wq "$ARCHIVE_PGDATA" \
+	&& borg list --short | grep -wq "$ARCHIVE_PGWAL" \
+	|| exit_message 3 "Cannot find both $ARCHIVE_PGDATA and $ARCHIVE_PGWAL archives!"
+
+if extract --dry-run ; then
+	printf "\nDry run OK. Cleaning local folders(%s and %s) before restoring...\n" "$PGDATA" "$WAL_DIR"
+	[[ -n $PGDATA 	&& -d $PGDATA 	]] && rm -rfv "$PGDATA/*"
+	[[ -n $WAL_DIR 	&& -d $WAL_DIR 	]] && rm -rfv "$WAL_DIR/*"
+	printf "\nRestore %s and %s...\n" "$ARCHIVE_PGDATA" "$ARCHIVE_PGWAL"
+	extract || exit_message 4 "Error while restoring data! Unstable state"
+	
+	LIVE_WAL="${PGDATA}/pg_xlog/*"
+	printf "\nClean live WAL files (%s)\n" "$LIVE_WAL"
+	rm -rfv "$LIVE_WAL"
+	
+	RECOVERY_FILE="$PGDATA/recovery.conf"
+	printf "\nCreate a recovery file in %s\n" "$RECOVERY_FILE"
+	echo "restore_command = 'cp $WAL_DIR/%f \"%p\"'" > "$RECOVERY_FILE" \
+		&& chown postgres:postgres "$RECOVERY_FILE" \
+		&& chmod 0600 "$RECOVERY_FILE" \
+		|| exit_message 5 "Error while generating recovery file $RECOVERY_FILE ."
+
+	printf "\nStart postgres for recovery\n"
+	gosu postgres pg_ctl -D "$PGDATA" -w start || exit_message 6 "Error launching Postgres for recovery!"
+	
+	printf "\nRemove the archived WAL segments\n"
+	rm -f "$WAL_DIR/*"
+	
+	printf "\nStop postgres : END OF RECOVERY!\n"
+	gosu postgres pg_ctl -D "$PGDATA" -m fast -w stop
+
+	printf "\nDone! %s and %s have been successfully restored using % archives.\n" "$PGDATA" "$WAL_DIR" "$TAG"
+	exit 0
+fi

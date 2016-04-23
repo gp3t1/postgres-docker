@@ -1,0 +1,69 @@
+#!/bin/bash
+
+backup_signal="$WAL_DIR/backup_in_progress"
+
+exit_message() {
+	if [[ "$1" =~ ^[0-9]{1,4}$ ]] ; then
+		CODE="$1"
+	else
+		CODE=-1
+	fi
+	printf "\nEXIT[%i] : %s" "$CODE" "$2"
+	# Signal that we're done with postgres backup
+	rm -f "$backup_signal"
+	exit $CODE
+}
+
+if [[ -f "$backup_signal" ]] ; then
+	exit_message 1 "A backup is already running!"
+else
+	# Signal that we're starting a backup
+	touch "$backup_signal"
+	tstamp="_$(date +%y%m%d.%H%M)"
+	TAG=${1:-$tstamp}
+	if [[ $1 == "--debug" ]]; then
+		arch_opts=" --dry-run "
+	fi
+
+	ARCHIVE_PGDATA="${TAG}.pgdata"
+	ARCHIVE_PGWAL="${TAG}.pgwal"
+
+	## START POSTGRES BACKUP (May not return immediately if system is busy)
+	if ! gosu postgres /usr/bin/psql -c "SELECT pg_start_backup('backup_${TAG}');" ; then
+		exit_message 2 "Cannot start postgres backup mode!"
+	else
+		printf "\nPOSTGRES -> BACKUP MODE\n"
+
+		# Grab the main data files
+		printf "\nCREATE PG_DATA archive : %s\n" "$ARCHIVE_PGDATA"
+		if ! borg create --info --show-rc --stats --progress --compression lz4 "$arch_opts" "$ARCHIVE_PGDATA" "$PGDATA" ; then
+			exit_message 3 "Cannot create $ARCHIVE_PGDATA archive!"
+		fi
+
+		## STOP POSTGRES BACKUP
+		gosu postgres /usr/bin/psql -c "SELECT pg_stop_backup();"
+		printf "\nPOSTGRES -> ONLINE\n"
+
+		# Grab the WAL archives that were created while we were copying the main data files
+		printf "\nCREATE WAL archive : %s\n" "$ARCHIVE_PGWAL"
+		if ! borg create --info --show-rc --stats --progress --compression lz4 "$arch_opts" "$ARCHIVE_PGWAL" "$WAL_DIR" ; then
+			exit_message 4 "Cannot create $ARCHIVE_PGWAL archive!"
+		fi
+		# Nuke archived WAL segments now that we're done
+		printf "\nCLEAN WAL archives : %s\n" "$WAL_DIR"
+		rm -f "$WAL_DIR"/*
+
+		# You should now remove old dumps from $v_backups if they're older than your retention period.
+		# tmpreaper or tmpwatch are tools that can do this for you.
+		# find "${v_backups}" -name "*.tar.gz" -ctime +30 -exec rm -f {} \;
+
+		# PRUNE ARCHIVES
+		printf "\nPURGE AUTO BACKUPS (except last 5 days, 4 weekly and 6 monthly) + ALL BACKUPS older 1year : \n"
+		borg prune --save-space --prefix "_" --info --show-rc --stats --list --keep-within=5d --keep-weekly=4 --keep-monthly=6 \
+		&& borg prune --save-space --info --show-rc --stats --list --keep-within=1y \
+		|| exit_message 5 "Cannot prune borg repo!"
+
+		exit 0
+	fi
+fi
+
