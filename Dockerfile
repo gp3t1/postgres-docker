@@ -30,8 +30,8 @@ RUN  sed -i '/^[\n|\t]*exec.*$/d' docker-entrypoint.sh \
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
 	&& apt-get autoremove -y \
 	&& rm -rf /var/lib/apt/lists/* \
-	&& curl --silent --show-error --output "/etc/ssl/certs/nodesource-ca.crt" "http://curl.haxx.se/ca/cacert.pem" \
-	&& curl --silent --show-error --output "/usr/local/bin/borg" "https://github.com/borgbackup/borg/releases/download/1.0.2/borg-linux64" \
+	&& curl --silent --show-error --output "/etc/ssl/certs/mozilla-ca.crt" "http://curl.haxx.se/ca/cacert.pem" \
+	&& curl --silent --show-error --cacert "/etc/ssl/certs/mozilla-ca.crt" --output "/usr/local/bin/borg" "https://github.com/borgbackup/borg/releases/download/1.0.2/borg-linux64" \
 	&& chmod 755 "/usr/local/bin/borg"
 
 # COPY scripts		
