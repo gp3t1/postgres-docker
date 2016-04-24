@@ -21,7 +21,7 @@ else
 	touch "$backup_signal"
 	tstamp="_$(date +%y%m%d.%H%M)"
 	TAG=${1:-$tstamp}
-	if [[ $1 == "--debug" ]]; then
+	if [[ $2 == "--debug" ]]; then
 		arch_opts=" --dry-run "
 	fi
 

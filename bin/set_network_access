@@ -1,0 +1,29 @@
+#!/bin/bash
+
+usage() {
+	printf "\nThis command is used to enable/disable network access to postgres."
+	printf "\nusage : $0 <on|off>\n"
+	exit 1
+}
+
+if [[ $# -ne 1 ]] ; then
+	usage
+fi
+
+HBA_CONF="$PGDATA/pg_hba.conf"
+
+case $1 in
+	[o|O][n|N] )
+		printf "Enabling network access in %s and reloading postgres" "$HBA_CONF"
+		sed -i 's|^#host all all 0.0.0.0/0 \(.*\)|host all all 0.0.0.0/0 \1|' "$HBA_CONF"
+		;;
+	[o|O][f|F][f|F] )
+		printf "Blocking network access in %s and reloading postgres" "$HBA_CONF"
+		sed -i 's|^host all all 0.0.0.0/0 \(.*\)|#host all all 0.0.0.0/0 \1|' "$HBA_CONF"
+		;;
+	* )
+		usage
+		;;
+esac
+
+gosu postgres pg_ctl -D "$PGDATA" reload
