@@ -29,7 +29,7 @@ function clean-data-volume {
 
 function set_folders {
 	# Postgres folders
-	mkdir -p "$PGDATA" "$WAL_DIR" "$v_entrypts/done"
+	mkdir -p "$PGDATA" "$WAL_DIR"
 	chmod -R 700 "$PGDATA" "$WAL_DIR" 
 	chown -R postgres:postgres "$PGDATA" "$WAL_DIR"
 	# Scripts access rights
@@ -53,11 +53,12 @@ function main {
 					&& chmod -R 770 "$v_entrypts" \
 					&& echo "$v_entrypts/00_config-cluster.sh will be run after initdb"
 				# Using original docker-entrypoint for standard settings
-				OLD_PWD=$(pwd)
-				cd "$v_entrypts"
-				check-initdb postgres \
-				&& tar -zcf "$v_entrypts/done/init.tar.gz" "$v_entrypts/*" --exclude='done' --remove-files
-				cd "$OLD_PWD"
+				if ! check-initdb postgres ; then
+					echo "error during check-initdb!"
+					exit 1
+				else
+					borg create --info --show-rc --stats --progress --compression lz4 "INIT" "$v_entrypts/" && rm $v_entrypts/* || echo "error archiving init scripts!"
+				fi
 			fi
 			echo "Starting..."
 			exec gosu postgres "$@"
